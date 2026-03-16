@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, HTTPException
+import uuid # <-- Nueva importación para generar nombres únicos
+from fastapi import FastAPI, HTTPException, UploadFile, File # <-- Nuevas importaciones
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -32,6 +33,7 @@ class Medicamento(BaseModel):
     nombre: str
     dosis: str
     instrucciones: Optional[str] = ""
+    foto_url: Optional[str] = "" # <-- Nueva propiedad
 
 # --- RUTAS DE SALUD Y GLUCOSA ---
 @app.get("/")
@@ -58,8 +60,7 @@ def obtener_estadisticas():
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# --- NUEVAS RUTAS DE MEDICAMENTOS ---
-
+# --- RUTAS DE MEDICAMENTOS ---
 @app.get("/medicamentos")
 def obtener_medicamentos():
     try:
@@ -74,7 +75,8 @@ def agregar_medicamento(med: Medicamento):
         data, count = supabase.table('medicamentos').insert({
             "nombre": med.nombre,
             "dosis": med.dosis,
-            "instrucciones": med.instrucciones
+            "instrucciones": med.instrucciones,
+            "foto_url": med.foto_url # <-- Guardar la URL
         }).execute()
         return {"mensaje": "Medicamento agregado", "datos": data[1]}
     except Exception as e:
@@ -86,7 +88,8 @@ def actualizar_medicamento(id: int, med: Medicamento):
         data, count = supabase.table('medicamentos').update({
             "nombre": med.nombre,
             "dosis": med.dosis,
-            "instrucciones": med.instrucciones
+            "instrucciones": med.instrucciones,
+            "foto_url": med.foto_url # <-- Actualizar la URL
         }).eq('id', id).execute()
         return {"mensaje": "Medicamento actualizado", "datos": data[1]}
     except Exception as e:
@@ -97,5 +100,28 @@ def eliminar_medicamento(id: int):
     try:
         data, count = supabase.table('medicamentos').delete().eq('id', id).execute()
         return {"mensaje": "Medicamento eliminado"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# --- NUEVA RUTA PARA SUBIR IMÁGENES ---
+@app.post("/upload-foto")
+async def upload_foto(file: UploadFile = File(...)):
+    try:
+        # 1. Leer el archivo y generar un nombre único para que no se sobreescriban
+        contents = await file.read()
+        extension = file.filename.split(".")[-1]
+        nombre_unico = f"{uuid.uuid4()}.{extension}"
+        
+        # 2. Subir al bucket de Supabase
+        supabase.storage.from_("fotos_medicinas").upload(
+            path=nombre_unico, 
+            file=contents, 
+            file_options={"content-type": file.content_type}
+        )
+        
+        # 3. Obtener el link público para guardarlo en la base de datos
+        url_publica = supabase.storage.from_("fotos_medicinas").get_public_url(nombre_unico)
+        
+        return {"url": url_publica}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
